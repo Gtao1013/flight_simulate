@@ -1,0 +1,181 @@
+#define _CRT_SECURE_NO_WARNINGS
+#include "AeroModel.h"
+#include <string.h>  // 添加 string.h 头文件支持字符串操作
+#include <stdlib.h>  // 添加 stdlib.h 头文件
+#include <iostream>  // 添加 iostream 支持调试输出
+#include <stdio.h>
+// 如果 _countof 未定义，则定义它
+#ifndef _countof
+#define _countof(array) (sizeof(array)/sizeof(array[0]))
+#endif
+
+// 声明在 Data_Parameter.cpp 中定义的文件打开函数
+extern FILE* tryOpenFile(const char* fileName);
+
+using namespace std;
+/**********************************
+***********************************/
+
+////////////             Ϊ  CDynaModel           //////////
+/////////////////////////// ////////////////////////////////
+CDynaModel::CDynaModel()
+{ }
+
+CDynaModel::~CDynaModel()
+{ }
+
+void CDynaModel::InputData()									//     
+{
+	FILE* input;
+	char str[80];
+	
+	cout << "准备读取气动数据..." << endl;
+	// 使用新的文件打开函数尝试多种路径
+	if ((input = tryOpenFile("Aerodynamic.dat")) == NULL)
+	{
+		printf("不能正常打开输入文件 Aerodynamic.dat\n");
+		cout << "请确认Aerodynamic.dat文件存在于Input目录中"
+			<< endl;
+		cout << "按任意键继续..." << endl;
+		getchar();
+		return;
+	}
+
+	try {
+		cout << "开始读取气动数据内容..." << endl;
+		
+		// 使用标准的 fscanf 替代 fscanf_s
+		fscanf(input, "%s", str);  //"由攻角引起的气动系数"
+		cout << "读取气动数据标题: " << str << endl;
+
+		fscanf(input, "%s", str);		//"Num_H"
+		cout << "读取Num_H标签: " << str << endl;
+		
+		fscanf(input, "%s", str);		//"Num_Ma"
+		cout << "读取Num_Ma标签: " << str << endl;
+		
+		fscanf(input, "%s", str);		//"Num_Alfa"
+		cout << "读取Num_Alfa标签: " << str << endl;
+		
+		fscanf(input, "%d%d%d", &Num_H, &Num_Ma, &Num_Alfa);
+		cout << "读取到尺寸参数: Num_H=" << Num_H << ", Num_Ma=" << Num_Ma << ", Num_Alfa=" << Num_Alfa << endl;
+		
+		fscanf(input, "%s", str);		//"data_H"
+		cout << "读取data_H标签: " << str << endl;
+		
+		data_H = new double[Num_H];						// 
+		for (int i = 0;i < (Num_H);i++)
+		{
+			fscanf(input, "%lf", &data_H[i]);
+			if (i < 3 || i > Num_H - 3)
+				cout << "data_H[" << i << "] = " << data_H[i] << endl;
+		}
+		cout << "高度数据读取完成" << endl;
+		// ... 继续读取其他数据 ...
+		cout << "气动数据读取过程中..." << endl;
+		cout << "请确认Aerodynamic.dat文件存在于Input目录中"
+			<< endl;
+		fclose(input);
+		cout << "气动数据文件已关闭" << endl;
+	}
+	catch (const std::exception& e) {
+		cout << "读取气动数据时发生异常: " << e.what() << endl;
+		if (input) fclose(input);
+		cout << "按任意键继续..." << endl;
+		getchar();
+		return;
+	}
+	catch (...) {
+		cout <<"读取气动数据时发生未知异常" << endl;
+		if (input) fclose(input);
+		cout << "按任意键继续..." << endl;
+		getchar();
+		return;
+	}
+}
+
+void CDynaModel::GetForce_Moment_Motion(CMassModel* ma, CMotiModel* mo, Data_Parameter* Gdata) //                
+{
+	t = mo->y[0];
+
+	Cx_a = LAQL3(Num_H, Num_Ma, Num_Alfa, data_H, data_Ma, data_Alfa, data_Cxa, mo->H, mo->Ma, mo->alfa * RtD);                //ӭ             Cx0+Cx_a*a 
+	Cx_b = LAQL3(Num_H, Num_Ma, Num_beta, data_H, data_Ma, data_beta, data_Cxb, mo->H, mo->Ma, mo->beta * RtD);                // ໬             Cx0+Cx_b*b
+	Cx_0 = LAQL3(Num_H, Num_Ma, Num_Alfa, data_H, data_Ma, data_Alfa, data_Cxa, mo->H, mo->Ma, 0);		   						//        Cx0
+	Cx = Cx_a + Cx_b - Cx_0;
+
+	Cy_a = LAQL3(Num_H, Num_Ma, Num_Alfa, data_H, data_Ma, data_Alfa, data_Cya, mo->H, mo->Ma, mo->alfa * RtD);                //ӭ      ķ     Cy0+Cy_a*a 
+	Cy_b = LAQL3(Num_H, Num_Ma, Num_beta, data_H, data_Ma, data_beta, data_Cyb, mo->H, mo->Ma, mo->beta * RtD);                // ໬      ķ     Cy0+Cy_b*b
+	Cy_0 = LAQL3(Num_H, Num_Ma, Num_Alfa, data_H, data_Ma, data_Alfa, data_Cya, mo->H, mo->Ma, 0);								//        Cy0
+	//Cy = Cy_a + Cy_b - Cy_0;
+	Cy = Cy_a;
+
+	Cz_b = LAQL3(Num_H, Num_Ma, Num_beta, data_H, data_Ma, data_beta, data_Cz, mo->H, mo->Ma, mo->beta * RtD);                // ໬      Ĳ     Cz
+	Cz = Cz_b;
+	if (Gdata->flag_1 == 1)
+	{
+		CD = -(cos(mo->alfa) * cos(mo->beta) * Cx - sin(mo->alfa) * cos(mo->beta) * Cy + sin(mo->beta) * Cz);
+		CL = sin(mo->alfa) * Cx + cos(mo->alfa) * Cy;
+		CZ = -cos(mo->alfa) * sin(mo->beta) * Cx + sin(mo->alfa) * sin(mo->beta) * Cy + cos(mo->beta) * Cz; 
+	}
+	else if (Gdata->flag_1 == 2)
+	{
+		CD = Cx;
+		CL = Cy;
+		CZ = Cz;
+	}
+	Mx_b = LAQL3(Num_H, Num_Ma, Num_beta, data_H, data_Ma, data_beta, data_Mx, mo->H, mo->Ma, mo->beta * RtD);                // ໬      Ĺ ت    Mx
+	Mx = Mx_b;
+
+	My_b = LAQL3(Num_H, Num_Ma, Num_beta, data_H, data_Ma, data_beta, data_My, mo->H, mo->Ma, mo->beta * RtD);                // ໬       ƫ      My
+	My = My_b;
+
+	Mz_a = LAQL3(Num_H, Num_Ma, Num_Alfa, data_H, data_Ma, data_Alfa, data_Mza, mo->H, mo->Ma, mo->alfa * RtD);                //ӭ      ĸ       Mz0+Mz_a*a
+	Mz_b = LAQL3(Num_H, Num_Ma, Num_beta, data_H, data_Ma, data_beta, data_Mzb, mo->H, mo->Ma, mo->beta * RtD);                // ໬      ĸ       Mz0+Mz_b*b
+	Mz_0 = LAQL3(Num_H, Num_Ma, Num_Alfa, data_H, data_Ma, data_Alfa, data_Mza, mo->H, mo->Ma, 0);								//            Mz0
+	//Mz = Mz_a + Mz_b - Mz_0;
+	Mz = Mz_a;
+
+
+	Mx_wx = LAQL2(Num_H, Num_Ma, data_H, data_Ma, data_Mx_wx, mo->H, mo->Ma);													//  ت   ᵼ  
+	Mx_wy = LAQL2(Num_H, Num_Ma, data_H, data_Ma, data_Mx_wy, mo->H, mo->Ma);													//  ت    -ƫ     ٶȽ  浼  
+	Mx_wz = LAQL2(Num_H, Num_Ma, data_H, data_Ma, data_Mx_wz, mo->H, mo->Ma);													//  ت    -       ٶȽ     ϵ  
+
+	My_wx = LAQL2(Num_H, Num_Ma, data_H, data_Ma, data_My_wx, mo->H, mo->Ma);													//ƫ      -  ت   ٶȽ  浼  
+	My_wy = LAQL2(Num_H, Num_Ma, data_H, data_Ma, data_My_wy, mo->H, mo->Ma);													//ƫ     ᵼ  
+	My_wz = LAQL2(Num_H, Num_Ma, data_H, data_Ma, data_My_wz, mo->H, mo->Ma);													//ƫ      -       ٶȽ     ϵ  
+
+	Mz_wx = LAQL2(Num_H, Num_Ma, data_H, data_Ma, data_Mz_wx, mo->H, mo->Ma);													//        -  ت   ٶȽ     ϵ   
+	Mz_wy = LAQL2(Num_H, Num_Ma, data_H, data_Ma, data_Mz_wy, mo->H, mo->Ma);													//        -ƫ     ٶȽ     ϵ   
+	Mz_wz = LAQL2(Num_H, Num_Ma, data_H, data_Ma, data_Mz_wz, mo->H, mo->Ma);													//       ᵼ  
+
+	return;
+}
+
+
+void CDynaModel::FreeData()                      // ͷŶ ̬    
+{
+	delete[]data_H;
+	delete[]data_Ma;
+	delete[]data_Alfa;
+	delete[]data_beta;
+
+	delete[]data_Cxa;
+	delete[]data_Cya;
+	delete[]data_Mza;
+	delete[]data_Cxb;
+	delete[]data_Cyb;
+	delete[]data_Cz;
+	delete[]data_Mx;
+	delete[]data_My;
+	delete[]data_Mzb;
+
+	delete[]data_Mx_wx;
+	delete[]data_Mx_wy;
+	delete[]data_Mx_wz;
+	delete[]data_My_wx;
+	delete[]data_My_wy;
+	delete[]data_My_wz;
+	delete[]data_Mz_wx;
+	delete[]data_Mz_wy;
+	delete[]data_Mz_wz;
+}
